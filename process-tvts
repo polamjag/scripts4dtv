@@ -1,0 +1,148 @@
+#!/bin/bash -e
+
+FFMPEG="ffmpeg"
+ASSDUMPER="assdumper"
+ASSADJUST="assadjust"
+ASS2VTT="ass-to-vtt"
+
+TS_TYPE="general" # or "anime"
+
+ENC_SIZE="720p" # or "1080p", "480p", "360p"
+
+ENC_CODEC="libx264"
+ENC_VIDEO_FLAGS="-preset medium"
+MAP_FLAGS=""
+
+REC_START_OFFSET=5
+
+enc_cmd="$FFMPEG"
+
+OVERWRITE=0 # is default, 1 is force, 2 is no
+NO_FFMPEG=0
+NO_VTT=0
+
+# parse options
+while [ $# -gt 0 ] ; do
+  case $1 in
+    -s|--size)
+      ENC_SIZE=$2
+      shift 2
+      ;;
+    -c|--codec)
+      ENC_CODEC=$2
+      shift 2
+      ;;
+    -t|--ts-type)
+      TS_TYPE=$2
+      shift 2
+      ;;
+    --flags)
+      ENC_VIDEO_FLAGS=$2
+      shift 2
+      ;;
+    -p|--programid)
+      MAP_FLAGS="-map 0:p:${2}:0 -map 0:p:${2}:1"
+      shift 2
+      ;;
+    --map)
+      MAP_FLAGS=$2
+      shift 2
+      ;;
+    --start)
+      REC_START_TIME=$2
+      shift 2
+      ;;
+    --rec-start-offset) # parse rec start time from default chinachu filename format
+      REC_START_OFFSET=$2
+      shift 2
+      ;;
+    --start-in-name) # parse rec start time from default chinachu filename format
+      REC_START_TIME=$(echo $(($(basename "$target_ts" | sed -e 's|\[[0-9]\{6\}-\([0-9]\{4\}\).*|\1|g'))) | sed -e "s|^\([0-9][0-9]\)\([0-9][0-9]\)$|\1:\2:$(( 60 - $REC_START_OFFSET ))|g")
+      shift
+      ;;
+    -i|--input)
+      target_ts=$2
+      shift 2
+      ;;
+    --no-overwrite)
+      OVERWRITE=2
+      shift
+      ;;
+    --overwrite)
+      OVERWRITE=1
+      shift
+      ;;
+    --no-ffmpeg)
+      NO_FFMPEG=1
+      shift
+      ;;
+    --no-vtt)
+      NO_VTT=1
+      shift
+      ;;
+    *)
+      echo "No such flag as $1"
+      exit 1
+      ;;
+  esac
+done
+
+target_name="$(echo "$target_ts" | sed -e 's|.m2ts$||g')"
+
+
+# =================
+# process subtitles
+# =================
+
+if [ $NO_VTT -eq 0 ] ; then
+  subtitle_dst="${target_name}.ass"
+
+  $ASSDUMPER "$target_ts" > "${subtitle_dst}.nc"
+  $ASSADJUST $REC_START_TIME "${subtitle_dst}.nc" > "$subtitle_dst"
+  $ASS2VTT "$subtitle_dst" > "${target_name}.vtt"
+  rm "${subtitle_dst}.nc"
+fi
+
+
+# =============
+# convert movie
+# =============
+
+if [ $NO_FFMPEG -eq 0 ] ; then
+  if [ -f "${target_name}.mp4" -a $OVERWRITE -eq 2 ] ; then
+    echo "   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!! "
+    echo "  !  Target file already exists  !"
+    echo "   !!!!!!!!!!!!!!!!!!!!!!!!!!!!!! "
+    exit 2
+  elif [ $OVERWRITE -eq 1 ] ; then
+    enc_cmd="$enc_cmd -y"
+  fi
+
+  enc_cmd="$enc_cmd -i $target_ts $MAP_FLAGS -c:v $ENC_CODEC $ENC_VIDEO_FLAGS -bsf:a aac_adtstoasc -c:a copy -movflags +faststart"
+
+  case $ENC_SIZE in
+    360p)
+      enc_cmd="$enc_cmd -s 640x360"
+      ;;
+    480p)
+      enc_cmd="$enc_cmd -s 854x480"
+      ;;
+    720p)
+      enc_cmd="$enc_cmd -s 1280x720"
+      ;;
+    1080p)
+      ;;
+  esac
+
+  case $TS_TYPE in
+    anime)
+      enc_cmd="$enc_cmd -vf yadif=deint=interlaced,decimate,fieldmatch"
+      ;;
+    *)
+      enc_cmd="$enc_cmd -vf yadif=deint=interlaced,fieldmatch"
+  esac
+
+  enc_cmd="$enc_cmd ${target_name}.mp4"
+
+  $enc_cmd
+fi
