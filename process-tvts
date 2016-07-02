@@ -8,10 +8,8 @@ ASS2VTT="ass-to-vtt"
 TS_TYPE="general" # or "anime"
 
 ENC_SIZE="720p" # or "1080p", "480p", "360p"
-
-ENC_CODEC="libx264"
-ENC_VIDEO_FLAGS="-preset medium"
-MAP_FLAGS=""
+ENC_CODEC="h264"
+ENC_CRF="24"
 
 REC_START_OFFSET=5
 
@@ -34,10 +32,6 @@ while [ $# -gt 0 ] ; do
       ;;
     -t|--ts-type)
       TS_TYPE=$2
-      shift 2
-      ;;
-    --flags)
-      ENC_VIDEO_FLAGS=$2
       shift 2
       ;;
     -p|--programid)
@@ -118,7 +112,25 @@ if [ $NO_FFMPEG -eq 0 ] ; then
     enc_cmd="$enc_cmd -y"
   fi
 
-  enc_cmd="$enc_cmd -i $target_ts $MAP_FLAGS -c:v $ENC_CODEC $ENC_VIDEO_FLAGS -bsf:a aac_adtstoasc -c:a copy -movflags +faststart"
+  case $ENC_CODEC in
+    h264)
+      case $ENC_SIZE in
+        360p|480p)
+          ENC_CRF=25
+          ;;
+        720p)
+          ENC_CRF=23
+          ;;
+      esac
+      enc_cmd="$enc_cmd -i $target_ts $MAP_FLAGS -c:v libx264 -preset medium -profile:v high -level 4.2 -crf $ENC_CRF -bsf:a aac_adtstoasc -c:a copy -movflags +faststart"
+      ;;
+    h265)
+      enc_cmd="$enc_cmd -i $target_ts $MAP_FLAGS -c:v libx265 -preset medium -bsf:a aac_adtstoasc -c:a copy -movflags +faststart"
+      ;;
+    vp9)
+      enc_cmd="$enc_cmd -i $target_ts $MAP_FLAGS -threads 8 -tile-columns 4 -c:v libvpx-vp9 -crf 20 -c:a libopus -ab 128k"
+      ;;
+  esac
 
   case $ENC_SIZE in
     360p)
@@ -136,13 +148,30 @@ if [ $NO_FFMPEG -eq 0 ] ; then
 
   case $TS_TYPE in
     anime)
-      enc_cmd="$enc_cmd -vf yadif=deint=interlaced,decimate,fieldmatch"
+      enc_cmd="$enc_cmd -vf bwdif=0:-1:1,decimate,fieldmatch"
+      case $ENC_CODEC in
+        h264|h265)
+          enc_cmd="$enc_cmd -tune animation"
+          ;;
+      esac
       ;;
     *)
-      enc_cmd="$enc_cmd -vf yadif=deint=interlaced,fieldmatch"
+      enc_cmd="$enc_cmd -vf bwdif=0:-1:1,fieldmatch"
+      ;;
   esac
 
-  enc_cmd="$enc_cmd ${target_name}.mp4"
+
+  case $ENC_CODEC in
+    h264|h265)
+      enc_cmd="$enc_cmd ${target_name}.mp4"
+      ;;
+    vp9)
+      enc_cmd="$enc_cmd ${target_name}.webm"
+      ;;
+    *)
+      enc_cmd="$enc_cmd ${target_name}.mkv"
+      ;;
+  esac
 
   $enc_cmd
 fi
