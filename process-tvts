@@ -1,6 +1,9 @@
-#!/bin/bash -e
+#!/bin/bash
 
-FFMPEG="ffmpeg"
+set -ex
+
+FFMPEG="/home/satoru/usr/bin/ffmpeg"
+# FFMPEG="ffmpeg"
 ASSDUMPER="assdumper"
 ASSADJUST="assadjust"
 ASS2VTT="ass-to-vtt"
@@ -11,7 +14,9 @@ ENC_SIZE="720p" # or "1080p", "480p", "360p"
 ENC_CODEC="h264"
 ENC_CRF="24"
 
-REC_START_OFFSET=5
+ENC_CODEC_A="-bsf:a aac_adtstoasc -c:a copy"
+
+REC_START_OFFSET=8
 
 enc_cmd="$FFMPEG"
 
@@ -30,8 +35,21 @@ while [ $# -gt 0 ] ; do
       ENC_CODEC=$2
       shift 2
       ;;
+    -ca|--codec-audio)
+      ENC_CODEC_A=$2
+      shift 2
+      ;;
     -t|--ts-type)
       TS_TYPE=$2
+      shift 2
+      ;;
+    --force-encode-audio)
+      BITRATE=$2
+      ENC_CODEC_A="-c:a aac -ab $BITRATE"
+      shift 2
+      ;;
+    --crf)
+      ENC_CRF=$2
       shift 2
       ;;
     -p|--programid)
@@ -41,6 +59,10 @@ while [ $# -gt 0 ] ; do
     --map)
       MAP_FLAGS=$2
       shift 2
+      ;;
+    --multisounds)
+      ENC_CODEC_A="-c:a aac -filter_complex '[0:1] channelsplit=channel_layout=stereo' -metadata:s:a:0 language=jpn -metadata:s:a:1 language=eng"
+      shift
       ;;
     --start)
       REC_START_TIME=$2
@@ -112,23 +134,29 @@ if [ $NO_FFMPEG -eq 0 ] ; then
     enc_cmd="$enc_cmd -y"
   fi
 
-  case $ENC_CODEC in
-    h264)
-      case $ENC_SIZE in
-        360p|480p)
-          ENC_CRF=25
-          ;;
-        720p)
-          ENC_CRF=23
+  if [ $NO_VTT -eq 0 ] ; then
+    case $ENC_CODEC in
+      h264|h265)
+        enc_cmd="$enc_cmd -i $target_ts -i $subtitle_dst $MAP_FLAGS -map 1:0 -c:s mov_text -metadata:s:2 language=jpn"
+      ;;
+    *)
+      ;;
+    esac
+  else
+    enc_cmd="$enc_cmd -i $target_ts $MAP_FLAGS"
+  fi
+
+  case $TS_TYPE in
+    anime)
+      enc_cmd="$enc_cmd -vf yadif=deint=interlaced,decimate,fieldmatch"
+      case $ENC_CODEC in
+        h264|h265)
+          enc_cmd="$enc_cmd -tune animation"
           ;;
       esac
-      enc_cmd="$enc_cmd -i $target_ts $MAP_FLAGS -c:v libx264 -preset medium -profile:v high -level 4.2 -crf $ENC_CRF -bsf:a aac_adtstoasc -c:a copy -movflags +faststart"
       ;;
-    h265)
-      enc_cmd="$enc_cmd -i $target_ts $MAP_FLAGS -c:v libx265 -preset medium -bsf:a aac_adtstoasc -c:a copy -movflags +faststart"
-      ;;
-    vp9)
-      enc_cmd="$enc_cmd -i $target_ts $MAP_FLAGS -threads 8 -tile-columns 4 -c:v libvpx-vp9 -crf 20 -c:a libopus -ab 128k"
+    *)
+      enc_cmd="$enc_cmd -vf yadif=deint=interlaced"
       ;;
   esac
 
@@ -146,32 +174,27 @@ if [ $NO_FFMPEG -eq 0 ] ; then
       ;;
   esac
 
-  case $TS_TYPE in
-    anime)
-      enc_cmd="$enc_cmd -vf bwdif=0:-1:1,decimate,fieldmatch"
-      case $ENC_CODEC in
-        h264|h265)
-          enc_cmd="$enc_cmd -tune animation"
-          ;;
-      esac
+  case $ENC_CODEC in
+    h264)
+      enc_cmd="$enc_cmd -c:v libx264 -preset medium -profile:v high -level 4.2 -x264-params crf=$ENC_CRF $ENC_CODEC_A -movflags +faststart"
       ;;
-    *)
-      enc_cmd="$enc_cmd -vf bwdif=0:-1:1,fieldmatch"
+    h265)
+      enc_cmd="$enc_cmd -c:v libx265 -preset medium -crf $ENC_CRF $ENC_CODEC_A -movflags +faststart"
       ;;
   esac
-
 
   case $ENC_CODEC in
     h264|h265)
       enc_cmd="$enc_cmd ${target_name}.mp4"
       ;;
-    vp9)
-      enc_cmd="$enc_cmd ${target_name}.webm"
-      ;;
     *)
       enc_cmd="$enc_cmd ${target_name}.mkv"
       ;;
   esac
+
+  echo
+  echo "$enc_cmd"
+  echo
 
   $enc_cmd
 fi
